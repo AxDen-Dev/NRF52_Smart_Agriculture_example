@@ -82,7 +82,8 @@
 #define APP_BLE_OBSERVER_PRIO           3                                       /**< Application's BLE observer priority. You shouldn't need to modify this value. */
 #define APP_BLE_CONN_CFG_TAG            1                                       /**< A tag identifying the SoftDevice BLE configuration. */
 
-#define APP_ADV_INTERVAL                600                                      /**< The advertising interval (in units of 0.625 ms; this value corresponds to 40 ms). */
+#define APP_DATA_READY_ADV_INTERVAL                320                                      /**< The advertising interval (in units of 0.625 ms; this value corresponds to 40 ms). */
+#define APP_IDLE_ADV_INTERVAL                1280                                      /**< The advertising interval (in units of 0.625 ms; this value corresponds to 40 ms). */
 #define APP_ADV_DURATION                BLE_GAP_ADV_TIMEOUT_GENERAL_UNLIMITED   /**< The advertising time-out (in units of seconds). When set to 0, we will never time out. */
 
 #define MIN_CONN_INTERVAL               MSEC_TO_UNITS(100, UNIT_1_25_MS)        /**< Minimum acceptable connection interval (0.5 seconds). */
@@ -97,6 +98,8 @@
 #define APP_TIMER_DELAY          APP_TIMER_TICKS(100)
 
 #define DEAD_BEEF                       0xDEADBEEF                              /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
+
+#define DISCONNECT_TIMEOUT 30
 
 #define SAADC_SAMPLES_IN_BUFFER 1
 
@@ -125,17 +128,19 @@ volatile uint8_t bme280_100ms_timer = 0x00;
 volatile uint8_t hdc1080_100ms_timer = 0x00;
 volatile uint8_t vcnl4040_100ms_timer = 0x00;
 
-static volatile uint8_t tx_complete_state = 0x01;
-static volatile uint8_t notify_enable_state = 0x00;
-static volatile uint8_t request_disconnect = 0x00;
-
 static int16_t temperature = 0;
 static uint8_t humidity = 0;
 static uint32_t pressure = 0;
 static uint16_t ambient_light = 0;
 static uint8_t battery_value = 0x00;
 
-static volatile uint8_t cycle_update = 0x00;
+static volatile uint8_t tx_complete_state = 0x01;
+static volatile uint8_t aggregator_notify_enable_state = 0x00;
+static volatile uint8_t stream_notify_enable_state = 0x00;
+static volatile uint16_t disconnect_timeout_count = 0;
+static volatile uint8_t request_disconnect = 0x00;
+static volatile uint8_t data_update_state = 0x00;
+
 static uint8_t mac_address[8] = { 0x00 };
 
 static uint8_t payload_size = 0;
@@ -255,11 +260,12 @@ static void gatt_init(void) {
  * @details Encodes the required advertising data and passes it to the stack.
  *          Also builds a structure to be passed to the stack when starting advertising.
  */
-static void advertising_init(uint8_t connection_request) {
+static void advertising_init(uint8_t data_update_state) {
 
 	ret_code_t err_code;
 	ble_advdata_t advdata;
 	ble_advdata_t srdata;
+	uint32_t interval = APP_IDLE_ADV_INTERVAL;
 
 	// Build and set advertising data.
 	memset(&advdata, 0, sizeof(advdata));
@@ -268,24 +274,29 @@ static void advertising_init(uint8_t connection_request) {
 	advdata.include_appearance = true;
 	advdata.flags = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
 
-	if (connection_request) {
+	if (data_update_state) {
 
-		ble_uuid_t adv_uuids[] = { { BLE_UUID_SERVICE, m_service.uuid_type } };
-
-		memset(&srdata, 0, sizeof(srdata));
-		srdata.uuids_complete.uuid_cnt = sizeof(adv_uuids)
-				/ sizeof(adv_uuids[0]);
-		srdata.uuids_complete.p_uuids = adv_uuids;
-
-	} else {
-
-		ble_uuid_t adv_uuids[] = { { BLE_NO_DATA_UUID_SERVICE,
+		ble_uuid_t adv_uuids[] = { { BLE_DATA_READY_UUID_SCAN_SERVICE,
 				m_service.uuid_type } };
 
 		memset(&srdata, 0, sizeof(srdata));
 		srdata.uuids_complete.uuid_cnt = sizeof(adv_uuids)
 				/ sizeof(adv_uuids[0]);
 		srdata.uuids_complete.p_uuids = adv_uuids;
+
+		interval = APP_DATA_READY_ADV_INTERVAL;
+
+	} else {
+
+		ble_uuid_t adv_uuids[] = { { BLE_IDLE_UUID_SCAN_SERVICE,
+				m_service.uuid_type } };
+
+		memset(&srdata, 0, sizeof(srdata));
+		srdata.uuids_complete.uuid_cnt = sizeof(adv_uuids)
+				/ sizeof(adv_uuids[0]);
+		srdata.uuids_complete.p_uuids = adv_uuids;
+
+		interval = APP_IDLE_ADV_INTERVAL;
 
 	}
 
@@ -308,7 +319,7 @@ static void advertising_init(uint8_t connection_request) {
 	BLE_GAP_ADV_TYPE_CONNECTABLE_SCANNABLE_UNDIRECTED;
 	adv_params.p_peer_addr = NULL;
 	adv_params.filter_policy = BLE_GAP_ADV_FP_ANY;
-	adv_params.interval = APP_ADV_INTERVAL;
+	adv_params.interval = interval;
 
 	err_code = sd_ble_gap_adv_set_configure(&m_adv_handle, &m_adv_data,
 			&adv_params);
@@ -340,17 +351,28 @@ static void ble_service_tx_complete_handler(uint16_t conn_handle,
 static void ble_service_notify_state_event_handler(uint16_t conn_handle,
 		ble_service_t *p_service, uint8_t p_event_notify_char, uint8_t p_event) {
 
-	if (p_event_notify_char == BLE_DEVICE_CHAR) {
+	if (p_event_notify_char == BLE_AGGREGATOR_CHAR) {
 
-		notify_enable_state = p_event;
-		NRF_LOG_INFO("Notify enable %d", notify_enable_state);
+		aggregator_notify_enable_state = p_event;
+		stream_notify_enable_state = 0x00;
+
+		NRF_LOG_INFO("Notify aggregator enable %d",
+				aggregator_notify_enable_state);
+
+	} else if (p_event_notify_char == BLE_STREAM_CHAR) {
+
+		aggregator_notify_enable_state = 0x00;
+		stream_notify_enable_state = p_event;
+
+		NRF_LOG_INFO("Notify stream enable %d", stream_notify_enable_state);
 
 	}
 
 }
 
 static void ble_service_write_handler(uint16_t conn_handle,
-		ble_service_t *p_service, uint8_t const *buffer, uint8_t buffer_size) {
+		ble_service_t *p_service, uint8_t event_type, uint8_t const *buffer,
+		uint8_t buffer_size) {
 
 	if (buffer_size == 5) {
 
@@ -490,7 +512,9 @@ static void ble_evt_handler(ble_evt_t const *p_ble_evt, void *p_context) {
 		;
 
 		tx_complete_state = 0x01;
-		notify_enable_state = 0x00;
+		aggregator_notify_enable_state = 0x00;
+		stream_notify_enable_state = 0x00;
+		disconnect_timeout_count = 0;
 		request_disconnect = 0x00;
 		m_conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
 
@@ -504,13 +528,15 @@ static void ble_evt_handler(ble_evt_t const *p_ble_evt, void *p_context) {
 		;
 
 		tx_complete_state = 0x01;
-		notify_enable_state = 0x00;
+		aggregator_notify_enable_state = 0x00;
+		stream_notify_enable_state = 0x00;
+		disconnect_timeout_count = 0;
 		request_disconnect = 0x00;
 		m_conn_handle = BLE_CONN_HANDLE_INVALID;
 
 		gap_params_init();
 
-		advertising_init(cycle_update);
+		advertising_init(data_update_state);
 
 		advertising_start();
 
@@ -975,7 +1001,6 @@ static void gpio_init() {
  */
 int main(void) {
 
-	uint8_t data_update = 0x00;
 	uint8_t battery_read_step = 0x00;
 
 	uint32_t device_id_0 = NRF_FICR->DEVICEID[1];
@@ -1017,7 +1042,7 @@ int main(void) {
 
 	services_init();
 
-	advertising_init(cycle_update);
+	advertising_init(data_update_state);
 
 	conn_params_init();
 
@@ -1085,9 +1110,12 @@ int main(void) {
 
 	radio_packet_protocol.Packet.company_id[0] = COMPANY_ID >> 8;
 	radio_packet_protocol.Packet.company_id[1] = COMPANY_ID;
+
 	radio_packet_protocol.Packet.device_id[0] = DEVICE_TYPE >> 8;
 	radio_packet_protocol.Packet.device_id[1] = DEVICE_TYPE;
+
 	memcpy(radio_packet_protocol.Packet.mac_address, mac_address, 8);
+
 	radio_packet_protocol.Packet.control_number = 0;
 
 	for (;;) {
@@ -1154,21 +1182,23 @@ int main(void) {
 				battery_read_step = 0x00;
 				collection_cycle_update = 0x00;
 
-				cycle_update = 0x01;
-
 				if (m_conn_handle == BLE_CONN_HANDLE_INVALID) {
 
-					adversting_stop();
+					if (data_update_state == 0x00) {
 
-					gap_params_init();
+						adversting_stop();
 
-					advertising_init(cycle_update);
+						gap_params_init();
 
-					advertising_start();
+						advertising_init(data_update_state);
+
+						advertising_start();
+
+					}
 
 				}
 
-				data_update = 0x01;
+				data_update_state = 0x01;
 
 				NRF_LOG_INFO("Data Update");
 
@@ -1176,44 +1206,76 @@ int main(void) {
 
 		}
 
-		if (data_update) {
+		if (m_conn_handle != BLE_CONN_HANDLE_INVALID) {
 
-			if (m_conn_handle != BLE_CONN_HANDLE_INVALID) {
+			if (aggregator_notify_enable_state) {
 
-				if (notify_enable_state) {
+				if (data_update_state) {
 
 					if (tx_complete_state == 0x01) {
 
 						tx_complete_state = 0x00;
 
-						ble_service_send_notification(m_conn_handle, &m_service,
-								radio_packet_protocol.buffer,
+						ble_service_send_aggregator_notification(m_conn_handle,
+								&m_service, radio_packet_protocol.buffer,
 								radio_packet_protocol_size);
 
-						NRF_LOG_INFO("Notify Send");
+						data_update_state = 0x00;
+
+						NRF_LOG_INFO("Aggregator notify send");
 
 					} else if (tx_complete_state == 0x02) {
 
-						if (request_disconnect == 0x00) {
-
-							cycle_update = 0x00;
-
-							sd_ble_gap_disconnect(m_conn_handle,
-							BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
-
-							request_disconnect = 0x01;
-
-							NRF_LOG_INFO("Disconnect request");
-
-						}
-
-						data_update = 0x00;
+						disconnect_timeout_count = DISCONNECT_TIMEOUT;
 
 					}
 
 				}
 
+			} else if (stream_notify_enable_state) {
+
+				if (data_update_state) {
+
+					if (tx_complete_state) {
+
+						tx_complete_state = 0x00;
+
+						ble_service_send_stream_notification(m_conn_handle,
+								&m_service, radio_packet_protocol.buffer,
+								radio_packet_protocol_size);
+
+						data_update_state = 0x00;
+
+						NRF_LOG_INFO("Stream notify send");
+
+					}
+
+				}
+
+				disconnect_timeout_count = 0;
+
 			}
+
+			disconnect_timeout_count++;
+
+			if (disconnect_timeout_count > DISCONNECT_TIMEOUT) {
+
+				if (request_disconnect == 0x00) {
+
+					sd_ble_gap_disconnect(m_conn_handle,
+					BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
+
+					request_disconnect = 0x01;
+
+					NRF_LOG_INFO("Disconnect request");
+
+				}
+
+			}
+
+		} else {
+
+			disconnect_timeout_count = 0;
 
 		}
 
