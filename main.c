@@ -144,7 +144,7 @@ static volatile uint8_t data_update_state = 0x00;
 static uint8_t mac_address[8] = { 0x00 };
 
 static uint8_t payload_size = 0;
-static uint8_t payload[115];
+static uint8_t payload[213];
 
 static uint8_t radio_packet_protocol_size = 0;
 static radio_packet_protocol_t radio_packet_protocol;
@@ -343,8 +343,17 @@ static void nrf_qwr_error_handler(uint32_t nrf_error) {
 static void ble_service_tx_complete_handler(uint16_t conn_handle,
 		ble_service_t *p_service) {
 
-	tx_complete_state = 0x02;
-	NRF_LOG_INFO("TX complete");
+	if (aggregator_notify_enable_state) {
+
+		tx_complete_state = 0x02;
+
+	} else if (stream_notify_enable_state) {
+
+		tx_complete_state = 0x01;
+
+	}
+
+	NRF_LOG_INFO("TX complete %d", tx_complete_state);
 
 }
 
