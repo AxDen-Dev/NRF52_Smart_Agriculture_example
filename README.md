@@ -38,6 +38,12 @@ Bluetooth smart farming uses AxDen's aggregator platform, and collects temperatu
 This is an example that provides quick testing of various service scenarios that require communication with Android, iOS, and Aggregator at the same time.
 <br>
 
+네이버 스마트 스토어에서 구매 가능합니다.
+<br>
+
+[네이버 스마트 스토어](https://smartstore.naver.com/axden)
+<br>
+
 -------------------------
 
 ### Bluetooth Smart Agriculture 의 주요 특징 및 기능
