@@ -69,14 +69,15 @@ Interwork with the AxDen Aggregator Platform to check sensor information on the 
 Learn Edge AI using sensor information stored in the AxDen Aggregator Platform.
 <br>
 
-[Donwload Android Application](https://play.google.com/store/apps/details?id=io.axden.module.example.axden_ble_module_example)
-
 -------------------------
 
 ### Terminal & Android Application
 <br>
 
 terminal baudrate : 9600
+<br>
+
+[Donwload Android Application](https://play.google.com/store/apps/details?id=io.axden.module.example.axden_ble_module_example)
 <br>
 
 <table>
