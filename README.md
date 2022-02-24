@@ -125,11 +125,9 @@ Complie and flash.
 Check whether COMPANY_ID and DEVICE_ID are applied correctly through the terminal
 <br>
 <br>
-Sensor information can be found on the Web or Mobile as shown in the image below
+Sensor information can be found on the Web or Mobile
 <br>
-<br>
-<img src="./asset/axden_aggregator_web.png">
-<br>
+
 
 -------------------------
 
