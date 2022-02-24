@@ -101,7 +101,7 @@ terminal baudrate : 9600
 
 -------------------------
 
-#### AxDen Aggregator Platform 을 이용한 확인 방법
+#### How to check using AXDEN Aggregator Platform
 <br>
 
 Enter COMPANY ID nad DEVCIE ID provided on the AXDEN Aggregator Platform website into COMPANY_ID and DEVCIE_ID in the Protocol.h header file.
