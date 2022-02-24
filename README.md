@@ -28,45 +28,45 @@
 
 -----------------------
 
-Bluetooth Smart Agriculture 은 AxDen 의 Aggregator Platform 를 이용하여 온도, 기압, 조도 와 같은 Smart Agriculture 에서 필요한 핵심적인 센서 정보를 수집합니다.
-<br>
-Android, iOS, Aggregator 와 통신이 동시에 필요한 다양한 서비스 시나리오를 빠르게 테스트 할 수 있도록 제공하는 예제입니다.
-<br>
-<br>
 Bluetooth smart farming uses AxDen's aggregator platform, and collects temperature, barometric pressure, and key sensor information required for smart farming.
 <br>
 This is an example that provides quick testing of various service scenarios that require communication with Android, iOS, and Aggregator at the same time.
 <br>
 
-네이버 스마트 스토어에서 구매 가능합니다.
+----
+
+Device can be purchased from the Naver Smart Store.
 <br>
 
-[네이버 스마트 스토어](https://smartstore.naver.com/axden)
+[Purchase Link : naver smart store](https://smartstore.naver.com/axden)
 <br>
+<br>
+
+You can purchase it by contacting sales@axden.io
 
 -------------------------
 
-### Bluetooth Smart Agriculture 의 주요 특징 및 기능
+### Key feature and functions
 <br>
 
-MCU | 설명
+MCU | Description
 :-------------------------:|:-------------------------:
 NRF52832 | BLE 5.0 / 5.1 / 5.2 / 5.3
 
-센서 | 설명
+Sensors | Description
 :-------------------------:|:-------------------------:
 BME280 | Air pressure, temperature sensor
 HDC1080 | Humidity, temperature sensor
 VCNL4040 | ToF distance, ambient light sensor
 Soil moisture sensor | On board
 
-Bluetooth Smart Agriculture 예제는 온도, 기압, 조도 와 같은 Smart Agriculture 에서 필요한 핵심적인 센서 정보를 수집하고 Bluetooth 를 이용하여 Android, iOS, Aggregator 에 전송합니다.
+The Bluetooth Smart Agricultural example collects key sensor information required by Smart Agriculture, such as temperature, air pressure, and illuminance, and sends it to Android, iOS, and Aggregators using Bluetooth.
 <br>
 <br>
-AxDen Aggregator Platform 과 연동하여 서버, DB 와 같은 인프라 구축 없이 Web 과 Mobile 에서 센서 정보를 확인합니다.
+Interwork with the AxDen Aggregator Platform to check sensor information on the Web and Mobile without building infrastructure such as servers and DBs.
 <br>
 <br>
-AxDen Aggregator Platform 에 저장된 센서 정보를 이용하여 Edge AI 를 학습시킵니다.
+Learn Edge AI using sensor information stored in the AxDen Aggregator Platform.
 <br>
 
 -------------------------
@@ -104,27 +104,31 @@ terminal baudrate : 9600
 #### AxDen Aggregator Platform 을 이용한 확인 방법
 <br>
 
-AxDen Aggregator 홈페이지에서 회원 가입 후 Bluetooth Smart Agriculture 의 MAC Address 를 등록합니다.
+Enter COMPANY ID nad DEVCIE ID provided on the AXDEN Aggregator Platform website into COMPANY_ID and DEVCIE_ID in the Protocol.h header file.
+<br>
 <br>
 
-AxDen Aggregator 홈페이지에서 제공하는 COMPANY ID, DEVICE ID 를 Protocol.h 파일의 COMPANY_ID, DEVICE_ID 에 입력합니다.
+[AXDEN Aggregator Platfrom](http://project.axden.io/)
+
 <br>
-<br>
+
 `#define COMPANY_ID 0`
+
 <br>
+
 `#define DEVICE_TYPE 0`
+
+<br>
+Complie and flash.
 <br>
 <br>
-컴파일 후 플래싱을 합니다.
+Check whether COMPANY_ID and DEVICE_ID are applied correctly through the terminal
 <br>
 <br>
-터미널을 통해 COMPANY_ID, DEVICE_ID 가 정상적으로 적용되었는지 확인합니다.
+Sensor information can be found on the Web or Mobile as shown in the image below
 <br>
 <br>
-아래 이미지와 같이 센서 정보를 Web 또는 Mobile 에서 확인할 수 있습니다.
-<br>
-<br>
-<img src="./assets/axden_aggregator_web.png">
+<img src="./asset/axden_aggregator_web.png">
 <br>
 
 -------------------------
