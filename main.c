@@ -123,6 +123,7 @@ const nrf_drv_twi_t m_twi = NRF_DRV_TWI_INSTANCE(0);
 static nrf_saadc_value_t m_buffer_pool_low_power[2][SAADC_SAMPLES_IN_BUFFER];
 static volatile uint8_t m_saadc_initialized = 0x00;
 
+static volatile uint8_t one_sec_timer_update = 0x00;
 static volatile uint8_t app_timer_update = 0x00;
 volatile uint8_t bme280_100ms_timer = 0x00;
 volatile uint8_t hdc1080_100ms_timer = 0x00;
@@ -143,11 +144,16 @@ static volatile uint8_t data_update_state = 0x00;
 
 static uint8_t mac_address[8] = { 0x00 };
 
-static uint8_t payload_size = 0;
-static uint8_t payload[213];
+static packet_header_0_t packet_header_0;
+static packet_header_1_t packet_header_1;
+static packet_event_0_t packet_event_0;
+static packet_event_1_t packet_event_1;
+static product_id_t product_id;
 
-static uint8_t radio_packet_protocol_size = 0;
-static radio_packet_protocol_t radio_packet_protocol;
+static volatile uint8_t packet_id = 0;
+static volatile uint8_t command_id = 0;
+static volatile uint8_t node_packet_data_size;
+static node_packet_data_t node_packet_data;
 
 static uint32_t collection_cycle_timeout_count = 0;
 static uint32_t collection_cycle_timer_count = COLLECTION_CYCLE_TIMEOUT;
@@ -197,7 +203,12 @@ static void app_time_timeout_handler(void *p_context) {
 
 		}
 
+		one_sec_timer_update = 0x01;
+
 		one_sec_timer_count = 0;
+
+		NRF_LOG_INFO("collection_cycle_timeout_count %d / %d",
+				collection_cycle_timeout_count, collection_cycle_timer_count);
 
 	}
 
@@ -343,15 +354,7 @@ static void nrf_qwr_error_handler(uint32_t nrf_error) {
 static void ble_service_tx_complete_handler(uint16_t conn_handle,
 		ble_service_t *p_service) {
 
-	if (aggregator_notify_enable_state) {
-
-		tx_complete_state = 0x02;
-
-	} else if (stream_notify_enable_state) {
-
-		tx_complete_state = 0x01;
-
-	}
+	tx_complete_state = 0x02;
 
 	NRF_LOG_INFO("TX complete %d", tx_complete_state);
 
@@ -387,7 +390,7 @@ static void ble_service_write_handler(uint16_t conn_handle,
 
 		uint8_t control_number = buffer[0];
 
-		if (radio_packet_protocol.Packet.control_number != control_number) {
+		if (command_id != control_number) {
 
 			uint32_t collection_cycle = buffer[1] << 24;
 			collection_cycle |= buffer[2] << 16;
@@ -399,7 +402,7 @@ static void ble_service_write_handler(uint16_t conn_handle,
 				collection_cycle_timeout_count = 0;
 				collection_cycle_timer_count = collection_cycle;
 
-				radio_packet_protocol.Packet.control_number = control_number;
+				command_id = control_number;
 
 			}
 
@@ -666,22 +669,6 @@ static void wait_200ms() {
 		}
 
 		app_timer_update = 0x00;
-
-	}
-
-}
-
-static void get_mac_address() {
-
-	uint32_t err_code;
-	ble_gap_addr_t addr;
-
-	err_code = sd_ble_gap_addr_get(&addr);
-	APP_ERROR_CHECK(err_code);
-
-	for (uint8_t i = 0; i < 6; i++) {
-
-		mac_address[5 - i] = addr.addr[i];
 
 	}
 
@@ -1006,11 +993,102 @@ static void gpio_init() {
 
 }
 
+static void build_event_packet(uint8_t event_type) {
+
+//	uint8_t header_0;
+//	uint8_t header_1;
+//	uint8_t mac_address[8];
+//	uint8_t product_id[2];
+//	uint8_t event_value_0;
+//	uint8_t event_value_1;
+
+	packet_header_0.bits.PACKET_TYPE = PACKET_TYPE_UPLINK_EVENT_HEADER_0;
+
+	node_packet_data.Event_Packet.header_0 = packet_header_0.value;
+	node_packet_data.Event_Packet.header_1 = packet_header_1.value;
+
+	memcpy(node_packet_data.Event_Packet.mac_address, mac_address,
+			sizeof(mac_address));
+
+	node_packet_data.Event_Packet.product_id[0] = product_id.value >> 8;
+	node_packet_data.Event_Packet.product_id[1] = product_id.value;
+
+	packet_event_0.bits.EVENT_TYPE = event_type;
+	node_packet_data.Event_Packet.event_value_0 = packet_event_0.value;
+	node_packet_data.Event_Packet.event_value_1 = packet_event_1.value;
+
+	node_packet_data_size = NODE_EVENT_PACKET_SIZE;
+
+	NRF_LOG_INFO("build_event_packet");
+
+}
+
+static void build_sensor_data_packet() {
+
+//	uint8_t header_0;
+//	uint8_t header_1;
+//	uint8_t mac_address[8];
+//	uint8_t packet_info;
+//	uint8_t battery_value;
+//	uint8_t temperature[2];
+//	uint8_t pressure[4];
+//	uint8_t humidity;
+//	uint8_t ambient_light[2];
+
+	packet_header_0.bits.PACKET_TYPE = PACKET_TYPE_UPLINK_SENSOR_DATA_HEADER_0;
+
+	node_packet_data.Data_Packet.header_0 = packet_header_0.value;
+	node_packet_data.Data_Packet.header_1 = packet_header_1.value;
+
+	memcpy(node_packet_data.Data_Packet.mac_address, mac_address,
+			sizeof(mac_address));
+
+	node_packet_data.Data_Packet.packet_info = (command_id << 4) & 0xF0;
+	node_packet_data.Data_Packet.packet_info |= (packet_id & 0x0F);
+
+	node_packet_data.Data_Packet.battery_value = battery_value;
+
+	node_packet_data.Data_Packet.temperature[0] = temperature >> 8;
+	node_packet_data.Data_Packet.temperature[1] = temperature;
+
+	node_packet_data.Data_Packet.pressure[0] = pressure >> 24;
+	node_packet_data.Data_Packet.pressure[1] = pressure >> 16;
+	node_packet_data.Data_Packet.pressure[2] = pressure >> 8;
+	node_packet_data.Data_Packet.pressure[3] = pressure;
+
+	node_packet_data.Data_Packet.humidity = humidity;
+
+	node_packet_data.Data_Packet.ambient_light[0] = ambient_light >> 8;
+	node_packet_data.Data_Packet.ambient_light[1] = ambient_light;
+
+	node_packet_data_size = NODE_DATA_PACKET_SIZE;
+
+	packet_id += 1;
+
+	if (packet_id > 0x0F) {
+
+		packet_id = 0;
+
+	}
+
+	NRF_LOG_INFO("build_sensor_data_packet");
+
+}
+
 /**@brief Function for application main entry.
  */
 int main(void) {
 
+	uint8_t event_init = 0x00;
+	uint8_t event_type = EVENT_TYPE_POWER_ON;
+
+	uint8_t event_packet_ready = 0x00;
+	uint8_t sensor_data_packet_ready = 0x00;
+
 	uint8_t battery_read_step = 0x00;
+
+	uint8_t on_off_state = 0x01;
+	uint8_t on_off_count = 0;
 
 	uint32_t device_id_0 = NRF_FICR->DEVICEID[1];
 	uint32_t device_id_1 = NRF_FICR->DEVICEID[0];
@@ -1055,13 +1133,33 @@ int main(void) {
 
 	conn_params_init();
 
-	advertising_start();
-
 	app_timer_start(m_app_timer_id, APP_TIMER_DELAY, NULL);
 
-	set_uart_usb_in_out_write_string("Start AxDen SmartAgriculture example");
+	/////////////////////// Init Protocol Data /////////////////////
 
-	get_mac_address();
+	packet_header_0.value = 0x00;
+	packet_header_0.bits.DEVICE_ROLE = 0x00;
+	packet_header_0.bits.PACKET_TYPE = PACKET_TYPE_UPLINK_EVENT_HEADER_0;
+	packet_header_0.bits.CHIP_MANUFACTURER = CHIP_MANUFACTURER_NORDIC;
+
+	packet_header_1.value = 0x00;
+	packet_header_1.bits.CHIP_IDENTIFIER = CHIP_IDENTIFIER_NRF52832;
+	packet_header_1.bits.COMMUNICATION_TYPE =
+	COMMUNICATION_TYPE_BLE_CONNECTION_1M;
+
+	product_id.value = 0x00;
+	product_id.bits.PRODUCT_ID = PRODUCT_ID_AA_MB_03;
+	product_id.bits.DEVICE_TYPE = 0x00;
+	product_id.bits.PRODUCT_TYPE = 0x01;
+
+	packet_event_0.value = 0x00;
+	packet_event_0.bits.EVENT_TYPE = EVENT_TYPE_POWER_ON;
+
+	packet_event_1.value = 0x00;
+
+	//////////////////// Start Application ///////////////////
+
+	set_uart_usb_in_out_write_string("Start AxDen SmartAgriculture example");
 
 	set_uart_usb_in_out_mac_address(mac_address);
 
@@ -1073,29 +1171,57 @@ int main(void) {
 
 	set_bme280_twi_instance(m_twi);
 
-	init_bme280();
+	if (!init_bme280()) {
+
+		packet_event_1.bits.BME280_ERROR = 0x01;
+
+	}
 
 	wait_200ms();
 
-	get_bme280_temperature(&temperature);
+	if (!get_bme280_temperature(&temperature)) {
 
-	get_bme280_pressure(&pressure);
+		packet_event_1.bits.BME280_ERROR = 0x01;
+
+	}
+
+	if (!get_bme280_pressure(&pressure)) {
+
+		packet_event_1.bits.BME280_ERROR = 0x01;
+
+	}
 
 	set_hdc1080_twi_instance(m_twi);
 
-	init_hdc1080();
+	if (!init_hdc1080()) {
+
+		packet_event_1.bits.HDC1080_ERROR = 0x01;
+
+	}
 
 	wait_200ms();
 
-	get_hdc1080_temperature_humidity(&temperature, &humidity);
+	if (!get_hdc1080_temperature_humidity(&temperature, &humidity)) {
+
+		packet_event_1.bits.HDC1080_ERROR = 0x01;
+
+	}
 
 	set_vcnl4040_twi_instance(m_twi);
 
-	init_vcnl4040();
+	if (!init_vcnl4040()) {
+
+		packet_event_1.bits.VCNL4040_ERROR = 0x01;
+
+	}
 
 	wait_200ms();
 
-	get_vcnl4040_ambient_light(&ambient_light);
+	if (!get_vcnl4040_ambient_light(&ambient_light)) {
+
+		packet_event_1.bits.VCNL4040_ERROR = 0x01;
+
+	}
 
 	nrf_gpio_pin_set(GPIO_BAT_EN);
 
@@ -1103,7 +1229,7 @@ int main(void) {
 
 	read_battery_level();
 
-	NRF_LOG_INFO("Print sensor value");
+	//////////////////// Print Value ///////////////////
 
 	set_uart_usb_in_out_battery(battery_value);
 
@@ -1115,97 +1241,193 @@ int main(void) {
 
 	set_uart_usb_in_out_lux(ambient_light);
 
+	//////////////////// Start Main Loop ///////////////////
+
+	event_packet_ready = 0x01;
+	data_update_state = 0x01;
+	advertising_init(data_update_state);
+
+	advertising_start();
+
 	NRF_LOG_INFO("Start main loop");
-
-	radio_packet_protocol.Packet.company_id[0] = COMPANY_ID >> 8;
-	radio_packet_protocol.Packet.company_id[1] = COMPANY_ID;
-
-	radio_packet_protocol.Packet.device_id[0] = DEVICE_TYPE >> 8;
-	radio_packet_protocol.Packet.device_id[1] = DEVICE_TYPE;
-
-	memcpy(radio_packet_protocol.Packet.mac_address, mac_address, 8);
-
-	radio_packet_protocol.Packet.control_number = 0;
 
 	for (;;) {
 
-		if (!nrf_gpio_pin_read(GPIO_BTN)) {
+		if (one_sec_timer_update) {
 
-			nrf_gpio_pin_toggle(GPIO_LED_0);
+			if (!nrf_gpio_pin_read(GPIO_BTN)) {
 
-		}
+				on_off_count += 1;
 
-		if (collection_cycle_update) {
+				if (on_off_count >= 3) {
 
-			if (battery_read_step == 0x00) {
+					if (on_off_state) {
 
-				nrf_gpio_pin_set(GPIO_BAT_EN);
+						event_type = EVENT_TYPE_POWER_OFF;
 
-				battery_read_step = 0x01;
+						NRF_LOG_INFO("EVENT_TYPE_POWER_OFF");
 
-			} else {
+					} else {
 
-				read_battery_level();
+						event_type = EVENT_TYPE_POWER_ON;
 
-				get_bme280_temperature(&temperature);
+						NRF_LOG_INFO("EVENT_TYPE_POWER_ON");
 
-				get_bme280_pressure(&pressure);
+					}
 
-				get_hdc1080_temperature_humidity(&temperature, &humidity);
+					event_init = 0x00;
+					event_packet_ready = 0x01;
+					data_update_state = 0x01;
 
-				get_vcnl4040_ambient_light(&ambient_light);
+					if (m_conn_handle == BLE_CONN_HANDLE_INVALID) {
 
-				set_uart_usb_in_out_battery(battery_value);
+						adversting_stop();
+						gap_params_init();
+						advertising_init(data_update_state);
+						advertising_start();
 
-				set_uart_usb_in_out_temperature(temperature);
+					} else {
 
-				set_uart_usb_in_out_pressure(pressure);
+						sd_ble_gap_disconnect(m_conn_handle,
+						BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
 
-				set_uart_usb_in_out_humidity(humidity);
+					}
 
-				set_uart_usb_in_out_lux(ambient_light);
+					on_off_state = !on_off_state;
+					on_off_count = 0;
 
-				payload_size = 0;
-				memset(payload, 0x00, sizeof(payload));
-
-				payload_size = sprintf((char*) payload, "%d.%d,",
-						(battery_value / 10), (battery_value % 10));
-
-				payload_size += sprintf((char*) payload + payload_size,
-						"%d.%d,", (temperature / 10), abs(temperature % 10));
-
-				payload_size += sprintf((char*) payload + payload_size, "%ld,",
-						pressure);
-
-				payload_size += sprintf((char*) payload + payload_size, "%d,",
-						humidity);
-
-				payload_size += sprintf((char*) payload + payload_size, "%d",
-						ambient_light);
-
-				radio_packet_protocol_size = PACKET_HEADER_SIZE;
-				radio_packet_protocol_size += payload_size;
-				memcpy(radio_packet_protocol.Packet.payload, payload,
-						payload_size);
-
-				battery_read_step = 0x00;
-				collection_cycle_update = 0x00;
-
-				if (m_conn_handle == BLE_CONN_HANDLE_INVALID) {
-
-					adversting_stop();
-
-					gap_params_init();
-
-					advertising_init(data_update_state);
-
-					advertising_start();
+					NRF_LOG_INFO("on_off_state %d", on_off_state);
 
 				}
 
-				data_update_state = 0x01;
+				nrf_gpio_pin_clear(GPIO_LED_0);
 
-				NRF_LOG_INFO("Data Update");
+			} else {
+
+				on_off_count = 0;
+
+				nrf_gpio_pin_set(GPIO_LED_0);
+
+			}
+
+			one_sec_timer_update = 0x00;
+
+		}
+
+		if (on_off_state && event_init) {
+
+			if (collection_cycle_update) {
+
+				if (battery_read_step == 0x00) {
+
+					nrf_gpio_pin_set(GPIO_BAT_EN);
+
+					battery_read_step = 0x01;
+
+				} else {
+
+					read_battery_level();
+
+					packet_event_1.bits.BME280_ERROR = 0x00;
+
+					if (!get_bme280_temperature(&temperature)) {
+
+						packet_event_1.bits.BME280_ERROR = 0x01;
+
+						event_type = EVENT_TYPE_RUN_TIME_EVENT;
+						event_packet_ready = 0x01;
+
+						NRF_LOG_INFO("BME280_ERROR");
+
+					} else {
+
+						NRF_LOG_INFO("temperature %d", temperature);
+
+					}
+
+					if (!get_bme280_pressure(&pressure)) {
+
+						packet_event_1.bits.BME280_ERROR = 0x01;
+
+						event_type = EVENT_TYPE_RUN_TIME_EVENT;
+						event_packet_ready = 0x01;
+
+						NRF_LOG_INFO("BME280_ERROR");
+
+					} else {
+
+						NRF_LOG_INFO("pressure %d", pressure);
+
+					}
+
+					packet_event_1.bits.HDC1080_ERROR = 0x00;
+
+					if (!get_hdc1080_temperature_humidity(&temperature,
+							&humidity)) {
+
+						packet_event_1.bits.HDC1080_ERROR = 0x01;
+
+						event_type = EVENT_TYPE_RUN_TIME_EVENT;
+						event_packet_ready = 0x01;
+
+						NRF_LOG_INFO("HDC1080_ERROR");
+
+					} else {
+
+						NRF_LOG_INFO("humidity %d", humidity);
+
+					}
+
+					packet_event_1.bits.VCNL4040_ERROR = 0x00;
+
+					if (!get_vcnl4040_ambient_light(&ambient_light)) {
+
+						packet_event_1.bits.VCNL4040_ERROR = 0x01;
+
+						event_type = EVENT_TYPE_RUN_TIME_EVENT;
+						event_packet_ready = 0x01;
+
+						NRF_LOG_INFO("VCNL4040_ERROR");
+
+					} else {
+
+						NRF_LOG_INFO("ambient_light %d", ambient_light);
+
+					}
+
+					set_uart_usb_in_out_battery(battery_value);
+
+					set_uart_usb_in_out_temperature(temperature);
+
+					set_uart_usb_in_out_pressure(pressure);
+
+					set_uart_usb_in_out_humidity(humidity);
+
+					set_uart_usb_in_out_lux(ambient_light);
+
+					sensor_data_packet_ready = 0x01;
+
+					battery_read_step = 0x00;
+
+					collection_cycle_update = 0x00;
+
+					data_update_state = 0x01;
+
+					if (m_conn_handle == BLE_CONN_HANDLE_INVALID) {
+
+						adversting_stop();
+
+						gap_params_init();
+
+						advertising_init(data_update_state);
+
+						advertising_start();
+
+					}
+
+					NRF_LOG_INFO("Sensor Data Update");
+
+				}
 
 			}
 
@@ -1213,51 +1435,77 @@ int main(void) {
 
 		if (m_conn_handle != BLE_CONN_HANDLE_INVALID) {
 
-			if (aggregator_notify_enable_state) {
+			if (aggregator_notify_enable_state || stream_notify_enable_state) {
 
-				if (data_update_state) {
+				if (event_packet_ready || sensor_data_packet_ready) {
 
 					if (tx_complete_state == 0x01) {
 
 						tx_complete_state = 0x00;
 
-						ble_service_send_aggregator_notification(m_conn_handle,
-								&m_service, radio_packet_protocol.buffer,
-								radio_packet_protocol_size);
+						if (event_packet_ready == 0x01) {
 
-						data_update_state = 0x00;
+							build_event_packet(event_type);
 
-						NRF_LOG_INFO("Aggregator notify send");
+						} else if (sensor_data_packet_ready == 0x01) {
+
+							build_sensor_data_packet();
+
+						}
+
+						if (aggregator_notify_enable_state) {
+
+							ble_service_send_aggregator_notification(
+									m_conn_handle, &m_service,
+									node_packet_data.buffer,
+									node_packet_data_size);
+
+							NRF_LOG_INFO("Gateway notify send");
+
+						} else if (stream_notify_enable_state) {
+
+							ble_service_send_stream_notification(m_conn_handle,
+									&m_service, node_packet_data.buffer,
+									node_packet_data_size);
+
+							NRF_LOG_INFO("Stream notify send");
+
+						}
 
 					} else if (tx_complete_state == 0x02) {
 
-						disconnect_timeout_count = DISCONNECT_TIMEOUT;
+						if (event_packet_ready == 0x01) {
+
+							event_packet_ready = 0x00;
+
+						} else if (sensor_data_packet_ready == 0x01) {
+
+							sensor_data_packet_ready = 0x00;
+
+						}
+
+						if (!event_packet_ready && !sensor_data_packet_ready) {
+
+							data_update_state = 0x00;
+							disconnect_timeout_count = DISCONNECT_TIMEOUT;
+
+						} else {
+
+							tx_complete_state = 0x01;
+
+						}
+
+						event_init = 0x01;
 
 					}
 
 				}
 
-			} else if (stream_notify_enable_state) {
+				if (stream_notify_enable_state) {
 
-				if (data_update_state) {
-
-					if (tx_complete_state) {
-
-						tx_complete_state = 0x00;
-
-						ble_service_send_stream_notification(m_conn_handle,
-								&m_service, radio_packet_protocol.buffer,
-								radio_packet_protocol_size);
-
-						data_update_state = 0x00;
-
-						NRF_LOG_INFO("Stream notify send");
-
-					}
+					disconnect_timeout_count = 0;
 
 				}
-
-				disconnect_timeout_count = 0;
 
 			}
 
